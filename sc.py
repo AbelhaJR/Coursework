@@ -9,6 +9,8 @@ use_sqlite = os.getenv("sqlite","false") in ("true","1") # Verify if the environ
 
 database = "cells.db"
 
+app = Flask(__name__)
+
 cells ={}
 # Function to interact with SQLite database
 def setup_database():
