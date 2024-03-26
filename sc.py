@@ -90,6 +90,6 @@ def list_cells():
         return jsonify(list(cells.keys())), 200
 
 if __name__ == '__main__':
-    app.run(host="localhost",port=3000)
+    app.run(host="localhost",port=3001)
 
 
