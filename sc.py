@@ -1,95 +1,73 @@
-import os # this module provides a portable way of using operating system dependent functionality
-import sqlite3 # this library provided a lightweight disk-based database that doesn´t require a separate server process
+import argparse
+import calculate
+import model
+import firebase
+import sqlite
+from flask import Flask, request
 
+app  = Flask(__name__)
+repo = sqlite.Repository("cells")
 
-from flask import Flask , request , jsonify # Flask is a small and lightweight Python web framework that provides useful tools and features
-
-use_sqlite = os.getenv("sqlite","false") in ("true","1") # Verify if the environment variable is set to determine the storage type
-
-
-database = "cells.db"
-
-app = Flask(__name__)
-
-cells ={}
-# Function to interact with SQLite database
-def setup_database():
-  conn = sqlite3.connect(database)
-  cursor = conn.cursor()
-  cursor.execute('''CREATE TABLE IF NOT EXISTS cells(id TEXT PRIMARY KEY,formula TEXT)''')
-  conn.commit()
-  conn.close()
-
-# Function to store cell in SQLite database 
-def database_query(query,args=()):
-  conn = sqlite3.connect(database)
-  cursor = conn.cursor()
-  cursor.execute(query,args)
-  conn.commit()
-  result = cursor.fetchall()
-  conn.close()
-  return result
-
-# Function to store cell in SQLite database
-def store_cell_in_db(cell_id, formula):
-    database_query("INSERT OR REPLACE INTO cells (id, formula) VALUES (?, ?)", (cell_id, formula))
-
-# Function to retrieve cell from SQLite database
-def retrieve_cell_from_db(cell_id):
-    result = database_query("SELECT formula FROM cells WHERE id=?", (cell_id,))
-    if result:
-        return result[0][0]
+@app.route("/cells/<string:id>",methods=["PUT"])
+def create(id):
+  js = request.get_json()
+  id2 = js.get("id")
+  formula = js.get("formula")
+  if id2 != None and formula != None and id == id2:
+    cell = model.Cell(id,formula)
+    if repo.lookup(id) != None:
+      if repo.update(cell):
+        return "",204 # No Content 
+      else:
+        return "",500 # Internal Server Error 
     else:
-        return None
+      if repo.insert(cell):
+        return "",201 # Created 
+      else:
+        return "",500 # Internal Server Error 
+  else:
+    return "",400 # Bad Request
 
-# Create SQLite database if USE_SQLITE flag is set
-if use_sqlite:
-    setup_database()
-@app.route('/cells', methods=['PUT'])
-def create_or_update_cell():
-    data = request.json
-    if not data or 'id' not in data or 'formula' not in data:
-        return jsonify({'error': 'Invalid request body'}), 400
-    
-    cell_id = data['id']
-    formula = data['formula']
-    
-    if not isinstance(cell_id, str) or not isinstance(formula, str):
-        return jsonify({'error': 'Cell ID and formula must be strings'}), 400
-    
-    # Store cell in database
-    if use_sqlite:
-        store_cell_in_db(cell_id, formula)
+@app.route("/cells/<string:id>",methods=["GET"])
+def read(id):
+  cell = repo.lookup(id)
+  if cell != None :
+    formula2 = calculate.calculate(repo,cell.formula)
+    return {"id":cell.id,"formula":str(formula2)},200 # OK
+  else :
+    return "",404 # Not Found 
+
+@app.route("/cells/<string:id>",methods=["DELETE"])
+def delete(id):
+  if repo.lookup(id) != None:
+    if repo.delete(id):
+      return "",204 # No Content 
     else:
-        cells[cell_id] = formula
-    
-    return '', 201 if retrieve_cell_from_db(cell_id) is None else 204
+      return "",500 # Internal Server Error 
+  else:
+    return "",404 # Bad Request
 
-@app.route('/cells/<cell_id>', methods=['GET'])
-def read_cell(cell_id):
-    if use_sqlite:
-        formula = retrieve_cell_from_db(cell_id)
-    else:
-        formula = cells.get(cell_id)
-    
-    if formula is None:
-        return jsonify({'error': 'Cell not found'}), 404
-    
-    try:
-        result = eval(formula)
-        return jsonify({'id': cell_id, 'value': result}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+@app.route("/cells",methods=["GET"])
+def list():
+  ids = repo.list() 
+  size = len(ids)
+  js = "["
+  for n,id in enumerate(ids) :
+    js += "\"" + id + "\""
+    if n < size - 1 : js += ","
+  js += "]"
+  return js,200 # OK
 
-@app.route('/cells', methods=['GET'])
-def list_cells():
-    if use_sqlite:
-        result = database_query("SELECT id FROM cells")
-        return jsonify([row[0] for row in result]), 200
-    else:
-        return jsonify(list(cells.keys())), 200
+def launcher(): 
+  global repo
+  parser = argparse.ArgumentParser()
+  parser.add_argument("-r",type=str,required=True) 
+  args = parser.parse_args()
+  if args.r == "firebase":
+    repo = firebase.Repository("cells")
+  else:
+    repo = sqlite.Repository("cells")
+  app.run(host="localhost",port=3000)
 
-if __name__ == '__main__':
-    app.run(host="localhost",port=3001)
-
-
+if __name__ == "__main__":
+  launcher()
